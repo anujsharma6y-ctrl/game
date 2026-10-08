@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>LOST — The Way Home</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    #canvas-container { width: 100%; height: 100%; position: absolute; }
+    
+    /* HUD Overlays */
+    #hud {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; display: flex; flex-direction: column; justify-content: space-between;
+      padding: 24px; box-sizing: border-box; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+    }
+    .hud-top { display: flex; justify-content: space-between; align-items: flex-start; }
+    .hud-bottom { display: flex; justify-content: space-between; align-items: flex-end; }
+    .status-card { background: rgba(10, 15, 25, 0.65); padding: 12px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); backdrop-filter: blur(4px); }
+    .title-banner { font-size: 22px; font-weight: 800; letter-spacing: 2px; color: #5bc0be; }
+    .objective-text { font-size: 14px; color: #e0e0e0; margin-top: 4px; }
+    .counter { font-size: 24px; font-weight: bold; color: #f1c40f; }
+    .ammo-card { font-size: 26px; font-weight: 800; letter-spacing: 1px; color: #e74c3c; }
+    .crosshair {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: 10px; height: 10px; border: 2px solid rgba(255,255,255,0.7); border-radius: 50%;
+    }
+    
+    /* Cinematic / Event Overlays */
+    #overlay-msg {
+      position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+      font-size: 44px; font-weight: 900; letter-spacing: 4px; text-align: center;
+      color: #fff; opacity: 0; transition: opacity 0.8s ease; pointer-events: none;
+    }
+    #instructions-modal {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.85); display: flex; flex-direction: column;
+      align-items: center; justify-content: center; z-index: 100; color: white; cursor: pointer;
+    }
+    #instructions-modal h1 { font-size: 40px; margin-bottom: 12px; letter-spacing: 3px; color: #5bc0be; }
+    #instructions-modal p { font-size: 16px; margin: 6px 0; color: #ccc; }
+    .btn-start {
+      margin-top: 24px; padding: 14px 32px; background: #5bc0be; border: none;
+      color: #111; font-size: 18px; font-weight: 700; border-radius: 4px; cursor: pointer;
+    }
+  </style>
+  <!-- Load Three.js Engine -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <div id="hud">
+    <div class="hud-top">
+      <div class="status-card">
+        <div class="title-banner">LOST — THE WAY HOME</div>
+        <div class="objective-text" id="obj-text">Objective: Explore forest & find the 7 stars</div>
+      </div>
+      <div class="status-card">
+        <div class="counter" id="star-count">⭐ 0 / 7</div>
+      </div>
+    </div>
+    <div class="crosshair" id="crosshair"></div>
+    <div class="hud-bottom">
+      <div class="status-card">
+        <div style="font-size: 12px; color: #888;">WEAPON: SCOUT RIFLE</div>
+        <div class="ammo-card" id="ammo-count">AMMO 12 / 48</div>
+      </div>
+      <div class="status-card" id="checkpoint-tag" style="opacity: 0.3;">
+        CHECKPOINT 1 ACTIVE
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay-msg"></div>
+
+  <div id="instructions-modal">
+    <h1>LOST — THE WAY HOME</h1>
+    <p><strong>Controls:</strong> W, A, S, D to Move | SHIFT to Sprint | SPACE to Jump</p>
+    <p><strong>Mouse:</strong> Look / Rotate Camera (Click to lock cursor)</p>
+    <p><strong>Right Mouse:</strong> Aim Camera | <strong>Left Mouse:</strong> Fire Weapon | <strong>R:</strong> Reload</p>
+    <p><strong>E:</strong> Interact / Checkpoint | <strong>Collect all 7 Glowing Stars</strong></p>
+    <button class="btn-start">CLICK TO BEGIN JOURNEY</button>
+  </div>
+
+  <script>
+    // --- 1. CORE ENGINE & SCENE SETUP ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a1118);
+    scene.fog = new THREE.FogExp2(0x0a1118, 0.015);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+    // --- 2. LIGHTING ---
+    const hemiLight = new THREE.HemisphereLight(0x8da5b5, 0x1c2b18, 0.6);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfff1cf, 1.2);
+    dirLight.position.set(40, 80, 50);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 150;
+    const d = 50;
+    dirLight.shadow.camera.left = -d;
+    dirLight.shadow.camera.right = d;
+    dirLight.shadow.camera.top = d;
+    dirLight.shadow.camera.bottom = -d;
+    scene.add(dirLight);
+
+    // --- 3. CHARACTER WITH PHOTO-PROJECTED HEAD IDENTITY ---
+    const playerGroup = new THREE.Group();
+    scene.add(playerGroup);
+
+    // Procedural generation of the boy's face texture anchor from reference
+    // Preserving: Side-swept dark hair, almond dark eyes, warm skin tone, white polo collar
+    function generateFacialTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+
+      // Base skin tone
+      ctx.fillStyle = "#c5946c";
+      ctx.fillRect(0, 0, 512, 512);
+
+      // Cheeks & facial contours
+      const gradient = ctx.createRadialGradient(256, 260, 50, 256, 260, 220);
+      gradient.addColorStop(0, "rgba(224, 169, 131, 0.4)");
+      gradient.addColorStop(1, "rgba(148, 101, 68, 0.8)");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 512, 512);
+
+      // Hair (Neat, combed left-to-right parting)[cite: 1]
+      ctx.fillStyle = "#1b140e";
+      ctx.beginPath();
+      ctx.moveTo(100, 140);
+      ctx.bezierCurveTo(150, 50, 360, 50, 420, 130);
+      ctx.bezierCurveTo(400, 200, 350, 160, 256, 175);
+      ctx.bezierCurveTo(180, 190, 120, 210, 100, 140);
+      ctx.fill();
+
+      // Eyebrows[cite: 1]
+      ctx.strokeStyle = "#1b140e";
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(160, 225); ctx.quadraticCurveTo(195, 210, 230, 225); // Left
+      ctx.moveTo(282, 225); ctx.quadraticCurveTo(317, 210, 352, 225); // Right
+      ctx.stroke();
+
+      // Almond Eyes[cite: 1]
+      function drawEye(x, y) {
+        ctx.fillStyle = "#fcfcfc";
+        ctx.beginPath();
+        ctx.ellipse(x, y, 22, 13, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#261a15";
+        ctx.beginPath();
+        ctx.arc(x, y, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(x - 3, y - 3, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      drawEye(195, 250);
+      drawEye(317, 250);
+
+      // Nose bridge and nostrils[cite: 1]
+      ctx.strokeStyle = "rgba(130, 83, 52, 0.6)";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(256, 240);
+      ctx.lineTo(252, 310);
+      ctx.lineTo(245, 320);
+      ctx.moveTo(267, 320);
+      ctx.lineTo(260, 310);
+      ctx.stroke();
+
+      // Mouth[cite: 1]
+      ctx.fillStyle = "#9e5348";
+      ctx.beginPath();
+      ctx.ellipse(256, 365, 32, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      return texture;
+    }
+
+    const faceTexture = generateFacialTexture();
+
+    // 3D Boy Mesh Construction
+    const skinMat = new THREE.MeshStandardMaterial({ map: faceTexture, roughness: 0.65, metalness: 0.1 });
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x1b140e, roughness: 0.8 });
+    const shirtMat = new THREE.MeshStandardMaterial({ color: 0xd9d9db, roughness: 0.8 }); // Off-white long sleeve[cite: 1]
+    const collarMat = new THREE.MeshStandardMaterial({ color: 0x1e3a6a, roughness: 0.8 }); // Navy blue polo collar[cite: 1]
+    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x7c7355, roughness: 0.9 }); // Khaki cargo trousers[cite: 1]
+
+    // Head
+    const headGeo = new THREE.SphereGeometry(0.42, 32, 32);
+    const headMesh = new THREE.Mesh(headGeo, skinMat);
+    headMesh.position.y = 2.45;
+    headMesh.castShadow = true;
+    playerGroup.add(headMesh);
+
+    // Hair cap
+    const hairGeo = new THREE.SphereGeometry(0.44, 24, 24, 0, Math.PI * 2, 0, Math.PI * 0.45);
+    const hairMesh = new THREE.Mesh(hairGeo, hairMat);
+    hairMesh.position.y = 2.50;
+    playerGroup.add(hairMesh);
+
+    // Torso (Shirt)[cite: 1]
+    const torsoGeo = new THREE.CylinderGeometry(0.38, 0.35, 1.1, 16);
+    const torsoMesh = new THREE.Mesh(torsoGeo, shirtMat);
+    torsoMesh.position.y = 1.7;
+    torsoMesh.castShadow = true;
+    playerGroup.add(torsoMesh);
+
+    // Blue Polo Collar[cite: 1]
+    const collarGeo = new THREE.TorusGeometry(0.35, 0.08, 8, 16);
+    collarGeo.rotateX(Math.PI / 2);
+    const collarMesh = new THREE.Mesh(collarGeo, collarMat);
+    collarMesh.position.y = 2.22;
+    playerGroup.add(collarMesh);
+
+    // Limbs
+    const legGeo = new THREE.CylinderGeometry(0.14, 0.12, 1.2, 12);
+    const leftLeg = new THREE.Mesh(legGeo, pantsMat);
+    leftLeg.position.set(-0.2, 0.6, 0);
+    leftLeg.castShadow = true;
+    playerGroup.add(leftLeg);
+
+    const rightLeg = new THREE.Mesh(legGeo, pantsMat);
+    rightLeg.position.set(0.2, 0.6, 0);
+    rightLeg.castShadow = true;
+    playerGroup.add(rightLeg);
+
+    const armGeo = new THREE.CylinderGeometry(0.1, 0.09, 1.0, 12);
+    const leftArm = new THREE.Mesh(armGeo, shirtMat);
+    leftArm.position.set(-0.52, 1.7, 0);
+    playerGroup.add(leftArm);
+
+    const rightArm = new THREE.Mesh(armGeo, shirtMat);
+    rightArm.position.set(0.52, 1.7, 0);
+    playerGroup.add(rightArm);
+
+    // 3D Scout Weapon
+    const gunGroup = new THREE.Group();
+    const gunBody = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.15, 0.8), new THREE.MeshStandardMaterial({ color: 0x222 }));
+    gunGroup.add(gunBody);
+    gunGroup.position.set(0.4, 1.5, 0.4);
+    playerGroup.add(gunGroup);
+
+    // --- 4. ENVIRONMENT & LEVEL 1 (FOREST) GENERATION ---
+    // Terrain
+    const terrainGeo = new THREE.PlaneGeometry(300, 300, 64, 64);
+    terrainGeo.rotateX(-Math.PI / 2);
+    const pos = terrainGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const vx = pos.getX(i);
+      const vz = pos.getZ(i);
+      pos.setY(i, Math.sin(vx * 0.05) * Math.cos(vz * 0.05) * 2.5);
+    }
+    terrainGeo.computeVertexNormals();
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x2b3e21, roughness: 0.9 });
+    const ground = new THREE.Mesh(terrainGeo, groundMat);
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Forest Trees & Rocks
+    const colliders = [];
+    const treeTrunkGeo = new THREE.CylinderGeometry(0.4, 0.6, 4, 8);
+    const treeLeavesGeo = new THREE.ConeGeometry(2.5, 6, 8);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x3d2817 });
+    const foliageMat = new THREE.MeshStandardMaterial({ color: 0x1b381e });
+
+    for (let i = 0; i < 75; i++) {
+      const x = (Math.random() - 0.5) * 240;
+      const z = (Math.random() - 0.5) * 240;
+      if (Math.hypot(x, z) < 8) continue; // Keep spawn clear
+
+      const tree = new THREE.Group();
+      const trunk = new THREE.Mesh(treeTrunkGeo, trunkMat);
+      trunk.position.y = 2;
+      trunk.castShadow = true;
+      const leaves = new THREE.Mesh(treeLeavesGeo, foliageMat);
+      leaves.position.y = 5.5;
+      leaves.castShadow = true;
+      tree.add(trunk, leaves);
+      tree.position.set(x, 0, z);
+      scene.add(tree);
+      colliders.push({ x, z, radius: 1.2 });
+    }
+
+    // --- 5. STARS & CHECKPOINTS ---
+    let collectedStars = 0;
+    const stars = [];
+    const starGeo = new THREE.OctahedronGeometry(0.5, 0);
+    const starMat = new THREE.MeshBasicMaterial({ color: 0xffd700, wireframe: false });
+
+    for (let i = 0; i < 7; i++) {
+      const star = new THREE.Mesh(starGeo, starMat);
+      const angle = (i / 7) * Math.PI * 2;
+      const dist = 30 + Math.random() * 50;
+      star.position.set(Math.cos(angle) * dist, 1.5, Math.sin(angle) * dist);
+      scene.add(star);
+      stars.push(star);
+    }
+
+    // Checkpoint
+    const checkpointPos = new THREE.Vector3(0, 0, 0);
+    let activeCheckpoint = new THREE.Vector3(0, 0, 0);
+
+    // --- 6. 3D ENEMY AI ---
+    const enemies = [];
+    function createEnemy(x, z) {
+      const eGroup = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.8, 12), new THREE.MeshStandardMaterial({ color: 0x992222 }));
+      body.position.y = 0.9;
+      body.castShadow = true;
+      eGroup.add(body);
+      eGroup.position.set(x, 0, z);
+      scene.add(eGroup);
+      return {
+        mesh: eGroup,
+        patrolOrigin: new THREE.Vector3(x, 0, z),
+        speed: 3.5,
+        state: 'patrol'
+      };
+    }
+    enemies.push(createEnemy(15, -20));
+    enemies.push(createEnemy(-35, 40));
+
+    // --- 7. CONTROLS & CAMERA SYSTEM ---
+    const keys = {};
+    let mouseYaw = 0;
+    let mousePitch = 0.2;
+    let isAiming = false;
+    let isPointerLocked = false;
+
+    window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+    window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+    window.addEventListener('mousedown', (e) => {
+      if (!isPointerLocked) return;
+      if (e.button === 2) isAiming = true;
+      if (e.button === 0) shootWeapon();
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 2) isAiming = false;
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!isPointerLocked) return;
+      mouseYaw -= e.movementX * 0.0025;
+      mousePitch -= e.movementY * 0.0025;
+      mousePitch = Math.max(-0.4, Math.min(0.8, mousePitch));
+    });
+
+    // Pointer Lock Modal Trigger
+    const modal = document.getElementById('instructions-modal');
+    modal.addEventListener('click', () => {
+      renderer.domElement.requestPointerLock();
+    });
+    document.addEventListener('pointerlockchange', () => {
+      isPointerLocked = (document.pointerLockElement === renderer.domElement);
+      modal.style.display = isPointerLocked ? 'none' : 'flex';
+    });
+
+    // --- 8. GAMEPLAY & COMBAT MECHANICS ---
+    let ammo = 12;
+    const maxAmmo = 12;
+    let totalAmmo = 48;
+
+    function shootWeapon() {
+      if (ammo <= 0) return;
+      ammo--;
+      document.getElementById('ammo-count').innerText = `AMMO ${ammo} / ${totalAmmo}`;
+      
+      // Raycast hitscan detection
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      for (let i = 0; i < enemies.length; i++) {
+        const hits = raycaster.intersectObjects(enemies[i].mesh.children);
+        if (hits.length > 0) {
+          scene.remove(enemies[i].mesh);
+          enemies.splice(i, 1);
+          break;
+        }
+      }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'r' && ammo < maxAmmo && totalAmmo > 0) {
+        const reloadAmount = Math.min(maxAmmo - ammo, totalAmmo);
+        ammo += reloadAmount;
+        totalAmmo -= reloadAmount;
+        document.getElementById('ammo-count').innerText = `AMMO ${ammo} / ${totalAmmo}`;
+      }
+    });
+
+    function triggerLostEvent() {
+      const msg = document.getElementById('overlay-msg');
+      msg.innerText = "YOU ARE LOST";
+      msg.style.opacity = '1';
+      setTimeout(() => {
+        playerGroup.position.copy(activeCheckpoint);
+        msg.style.opacity = '0';
+      }, 1600);
+    }
+
+    // --- 9. MAIN GAME LOOP ---
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = Math.min(clock.getDelta(), 0.1);
+
+      // Player Movement Physics
+      const moveSpeed = keys['shift'] ? 9.0 : 4.5;
+      const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), mouseYaw);
+      const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), mouseYaw);
+      const moveDir = new THREE.Vector3();
+
+      if (keys['w']) moveDir.add(forward);
+      if (keys['s']) moveDir.sub(forward);
+      if (keys['d']) moveDir.add(right);
+      if (keys['a']) moveDir.sub(right);
+
+      if (moveDir.lengthSq() > 0) {
+        moveDir.normalize();
+        const nextX = playerGroup.position.x + moveDir.x * moveSpeed * delta;
+        const nextZ = playerGroup.position.z + moveDir.z * moveSpeed * delta;
+        
+        // Simple Obstacle Collision Check
+        let blocked = false;
+        for (const obs of colliders) {
+          if (Math.hypot(nextX - obs.x, nextZ - obs.z) < obs.radius) {
+            blocked = true;
+            break;
+          }
+        }
+        if (!blocked) {
+          playerGroup.position.x = nextX;
+          playerGroup.position.z = nextZ;
+        }
+        playerGroup.rotation.y = THREE.MathUtils.lerp(playerGroup.rotation.y, mouseYaw + Math.PI, 0.15);
+        
+        // Running limb animation
+        const t = clock.getElapsedTime() * (keys['shift'] ? 16 : 9);
+        leftLeg.rotation.x = Math.sin(t) * 0.6;
+        rightLeg.rotation.x = -Math.sin(t) * 0.6;
+      } else {
+        leftLeg.rotation.x = 0;
+        rightLeg.rotation.x = 0;
+      }
+
+      // Smooth Third-Person Camera Follow
+      const targetDist = isAiming ? 2.2 : 5.0;
+      const targetHeight = isAiming ? 2.2 : 2.8;
+      const camOffset = new THREE.Vector3(0, targetHeight, targetDist)
+        .applyAxisAngle(new THREE.Vector3(1, 0, 0), mousePitch)
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), mouseYaw);
+
+      camera.position.lerp(playerGroup.position.clone().add(camOffset), 0.2);
+      camera.lookAt(playerGroup.position.clone().add(new THREE.Vector3(0, 1.8, 0)));
+
+      // Collect Stars Check
+      for (let i = stars.length - 1; i >= 0; i--) {
+        const star = stars[i];
+        star.rotation.y += 2.0 * delta;
+        if (playerGroup.position.distanceTo(star.position) < 1.6) {
+          scene.remove(star);
+          stars.splice(i, 1);
+          collectedStars++;
+          document.getElementById('star-count').innerText = `⭐ ${collectedStars} / 7`;
+          if (collectedStars === 7) {
+            const msg = document.getElementById('overlay-msg');
+            msg.innerHTML = "YOU FOUND THE WAY HOME<br><span style='font-size:24px'>THE JOURNEY IS COMPLETE</span>";
+            msg.style.opacity = '1';
+          }
+        }
+      }
+
+      // Enemy AI Behaviour Loop
+      for (const e of enemies) {
+        const dist = e.mesh.position.distanceTo(playerGroup.position);
+        if (dist < 15) {
+          // Chase
+          e.mesh.lookAt(playerGroup.position.x, 0, playerGroup.position.z);
+          const eDir = playerGroup.position.clone().sub(e.mesh.position).normalize();
+          e.mesh.position.add(eDir.multiplyScalar(e.speed * delta));
+          if (dist < 1.2) {
+            triggerLostEvent();
+          }
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
